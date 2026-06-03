@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+.pytest_cache/
+.ipynb_checkpoints/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / local tooling
+.vscode/
+.idea/
+.cursor/
+
+# Training outputs & large artifacts
+results/
+figures/
+runs/
+tb_logs/
+*.pth
+*.ckpt
+*.log
+*.npy
+*.nc
+*.zip
+
+# Local result packs / one-off summaries (keep data on disk, not in git)
+*_summary.txt
+paper_pack.zip
+tau_results*.zip
+convlstm_nll_ft*.zip
+prob_baselines*.zip
+
+# External result mounts (AutoDL / local)
+/autodl-fs/
+Weather-pred-results/
+
+# OS
+.DS_Store
+Thumbs.db

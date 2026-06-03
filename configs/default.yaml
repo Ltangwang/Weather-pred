@@ -1,0 +1,15 @@
+seed: 42
+optimizer:
+  name: AdamW
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+scheduler:
+  name: OneCycleLR
+amp:
+  enabled: true
+  dtype: float16
+train:
+  batch_size: 16
+  accum_steps: 4
+  epochs: 50
+  best_metric: crps

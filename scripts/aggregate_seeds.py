@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Aggregate paper_eval_summary.txt across random seeds (mean ± std)."""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import re
+import statistics
+from pathlib import Path
+
+_HEADLINE_KEYS = ("rmse", "mae", "crps", "nll", "ece")
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the seed aggregator."""
+
+    p = argparse.ArgumentParser(
+        description="Aggregate paper_eval_summary.txt across seeds.",
+    )
+    p.add_argument("--inputs", nargs="+", required=True,
+                   help="Run directories (each containing "
+                        "``paper_eval_summary.txt`` and optionally "
+                        "``per_leadtime.csv``).")
+    p.add_argument("--output_dir", type=str, required=True,
+                   help="Where to write the aggregated artifacts.")
+    p.add_argument("--label", type=str, default="Ours",
+                   help="Row label in the LaTeX table.")
+    return p.parse_args()
+
+
+def _parse_compact(summary_path: Path) -> dict[str, float] | None:
+    """Pick the ``compact: rmse:..., mae:..., ...`` line out of a summary file.
+
+    The compact line is identical across all three scripts
+    (``run_probabilistic``, ``run_finetune_nll``, ``temperature_scaling``)
+    which is why we parse it instead of the human-readable banner.
+    """
+
+    if not summary_path.is_file():
+        return None
+    text = summary_path.read_text()
+    m = re.search(r"compact:\s*(.+)", text)
+    if not m:
+        return None
+    out: dict[str, float] = {}
+    for kv in m.group(1).split(","):
+        kv = kv.strip()
+        if not kv:
+            continue
+        k, v = kv.split(":")
+        try:
+            out[k.strip()] = float(v.strip())
+        except ValueError:
+            continue
+    return out
+
+
+def _agg(values: list[float]) -> tuple[float, float]:
+    """Return ``(mean, sample_std)``; ``std`` is 0 when only one value."""
+
+    if not values:
+        return float("nan"), float("nan")
+    if len(values) == 1:
+        return values[0], 0.0
+    return statistics.fmean(values), statistics.stdev(values)
+
+
+def _per_leadtime_agg(run_dirs: list[Path]) -> dict | None:
+    """Aggregate per lead-time metrics across runs when CSV is present.
+
+    Returns ``None`` if any run is missing the CSV (so we don't quietly
+    report partial averages).
+    """
+
+    per_run: list[dict[int, dict[str, float]]] = []
+    for d in run_dirs:
+        csv_path = d / "per_leadtime.csv"
+        if not csv_path.is_file():
+            return None
+        with csv_path.open() as f:
+            reader = csv.DictReader(f)
+            run = {}
+            for r in reader:
+                run[int(r["leadtime"])] = {k: float(r[k]) for k in _HEADLINE_KEYS}
+            per_run.append(run)
+
+    leadtimes = sorted(set().union(*per_run))
+    agg = {}
+    for lt in leadtimes:
+        agg[lt] = {}
+        for k in _HEADLINE_KEYS:
+            vals = [run[lt][k] for run in per_run if lt in run]
+            m, s = _agg(vals)
+            agg[lt][k] = {"mean": m, "std": s}
+    return agg
+
+
+def main() -> None:
+    """Aggregate seeds and write banner + JSON + LaTeX table."""
+
+    args = _parse_args()
+    run_dirs = [Path(p).resolve() for p in args.inputs]
+    out_dir = Path(args.output_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    per_run: list[dict[str, float]] = []
+    used: list[Path] = []
+    for d in run_dirs:
+        parsed = _parse_compact(d / "paper_eval_summary.txt")
+        if parsed is None:
+            print(f"[warn] no parseable summary in {d}, skipping")
+            continue
+        per_run.append(parsed)
+        used.append(d)
+
+    if not per_run:
+        raise RuntimeError("No usable runs were found.")
+
+    # Headline metrics.
+    headline = {}
+    for k in _HEADLINE_KEYS:
+        vals = [r[k] for r in per_run if k in r]
+        m, s = _agg(vals)
+        headline[k] = {"mean": m, "std": s, "n": len(vals)}
+
+    # Per lead-time (only if all runs have it).
+    lt_agg = _per_leadtime_agg(used)
+
+    # 1) Banner.
+    lines = [
+        "=" * 78,
+        f"AGGREGATED ({len(per_run)} seed run{'s' if len(per_run) > 1 else ''})",
+        "=" * 78,
+    ]
+    for d in used:
+        lines.append(f"  source: {d}")
+    lines.append("-" * 78)
+    for k in _HEADLINE_KEYS:
+        h = headline[k]
+        lines.append(f"  {k.upper():<6} mean={h['mean']:.4f}  std={h['std']:.4f}  (n={h['n']})")
+    lines.append("=" * 78)
+    banner = "\n".join(lines)
+    print("\n" + banner)
+    (out_dir / "aggregated_summary.txt").write_text(banner + "\n")
+
+    # 2) JSON dump (machine readable).
+    with (out_dir / "aggregated.json").open("w") as f:
+        json.dump({
+            "headline": headline,
+            "per_leadtime": lt_agg,
+            "sources": [str(d) for d in used],
+        }, f, indent=2)
+
+    # 3) LaTeX table — headline row.
+    with (out_dir / "aggregated_table.tex").open("w") as f:
+        f.write("% Auto-generated by scripts/aggregate_seeds.py\n")
+        f.write("\\begin{tabular}{lccccc}\n")
+        f.write("\\toprule\n")
+        f.write("Method & RMSE (K) & MAE (K) & CRPS (K) & NLL & ECE \\\\\n")
+        f.write("\\midrule\n")
+        cells = []
+        for k in _HEADLINE_KEYS:
+            h = headline[k]
+            if h["n"] > 1:
+                cells.append(f"{h['mean']:.3f} $\\pm$ {h['std']:.3f}")
+            else:
+                cells.append(f"{h['mean']:.3f}")
+        f.write(f"{args.label} & " + " & ".join(cells) + " \\\\\n")
+        f.write("\\bottomrule\n")
+        f.write("\\end{tabular}\n")
+
+    print(f"\nWrote: {out_dir / 'aggregated_summary.txt'}")
+    print(f"Wrote: {out_dir / 'aggregated.json'}")
+    print(f"Wrote: {out_dir / 'aggregated_table.tex'}")
+
+
+if __name__ == "__main__":
+    main()

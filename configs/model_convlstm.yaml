@@ -1,0 +1,11 @@
+model:
+  backbone: ConvLSTM
+  in_shape: [10, 1, 32, 64]
+  num_hidden: [128, 128, 128, 128]
+  filter_size: 5
+  stride: 1
+  patch_size: 1
+  layer_norm: false
+prob:
+  out_channels: 1
+  log_var_clamp: [-10, 10]

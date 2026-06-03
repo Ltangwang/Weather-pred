@@ -1,0 +1,15 @@
+torch>=2.0
+numpy
+scipy
+matplotlib
+pyyaml
+tqdm
+tensorboard
+scikit-learn
+pytest
+xarray
+netCDF4
+
+# --- OpenSTL deterministic baseline hints (environment-specific) ---
+# If ``import timm.optim.nadam`` fails: pip install timm==0.9.12 (or newer OpenSTL without that import).
+# If TensorBoard / protobuf breaks with NumPy 2: pin numpy<2 for that venv when not using CSV launcher.

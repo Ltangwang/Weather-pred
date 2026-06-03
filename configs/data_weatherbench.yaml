@@ -1,0 +1,10 @@
+data:
+  name: weatherbench
+  variable: t2m
+  # OpenSTL resolve: <data_root>/weather_5_625deg/2m_temperature/*.nc (see README)
+  data_root: /root/autodl-tmp/OpenSTL/data
+  in_len: 10
+  out_len: 10
+  resolution: [32, 64]
+  num_workers: 4
+  norm_stats_path: results/norm_stats.json

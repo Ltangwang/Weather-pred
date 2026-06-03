@@ -1,0 +1,47 @@
+# OpenSTL deterministic baseline (WeatherBench t2m 5.625°) — YAML-driven paths only.
+#
+# Launcher: Weather-pred/scripts/train_openstl_no_tensorboard.py (does not patch OpenSTL tree).
+
+# ``anchor`` for relative entries = directory containing ``configs/`` (Weather-pred root by default).
+project_root: .
+openstl_root: ../OpenSTL
+
+# Relative paths below resolve under project_root unless absolute.
+launcher: scripts/train_openstl_no_tensorboard.py
+work_dirs: results/openstl_work_dirs
+baseline_logs: results/baseline_logs
+
+dataname: weather_t2m_5_625
+# Passed to launcher as ``--data_root``; cwd is ``openstl_root``, so ./data resolves there.
+data_root: ./data
+
+# Optional: CUDA device binding for concurrent jobs (YAML or ``--cuda-visible-device``).
+hardware:
+  gpus:
+    - 0
+  # If set (e.g. "1"), exports CUDA_VISIBLE_DEVICES so OpenSTL Lightning uses logical GPU 0 on that chip.
+  cuda_visible_devices: null
+
+train:
+  batch_size: 16
+  val_batch_size: 16
+  num_workers: 4
+  seed: 42
+  log_step: 1
+  epochs_smoke: 1
+  epochs_full: 50
+
+# Lightning ``limit_*_batches``: null = unrestricted. Integers trim steps per epoch / test.
+limits:
+  train_batches: null
+  val_batches: null
+  test_batches: null
+
+# Paths under ``openstl_root`` (passed to ``-c``).
+backbones:
+  simvp:
+    method: SimVP
+    cfg: configs/weather/t2m_5_625/SimVP_gSTA.py
+  convlstm:
+    method: ConvLSTM
+    cfg: configs/weather/t2m_5_625/ConvLSTM.py
