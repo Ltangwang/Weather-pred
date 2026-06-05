@@ -135,7 +135,24 @@ Expected layout: `data/weather_5_625deg/2m_temperature/*.nc`
 
 ## Citation
 
-If you use this code, please cite OpenSTL and WeatherBench, and refer to your own publication for the ProbWrapper + two-stage training method.
+If you use this code, please cite the ProbWrapper paper together with the OpenSTL and WeatherBench resources it builds on.
+
+**ProbWrapper (this method):**
+
+```bibtex
+@article{hou2026probwrapper,
+  title   = {ProbWrapper: Backbone-Agnostic Probabilistic Neural Spatiotemporal
+             Weather Forecasting with Two-Stage CRPS--NLL Training},
+  author  = {Hou, WeiDong and Kasmiran, Khairul Azhar},
+  year    = {2026},
+  note    = {Manuscript}
+}
+```
+
+Please also cite the backbones/benchmark this work depends on:
+
+- **OpenSTL** — Tan et al., *OpenSTL: A Comprehensive Benchmark of Spatio-Temporal Predictive Learning*, NeurIPS Datasets and Benchmarks, 2023.
+- **WeatherBench** — Rasp et al., *WeatherBench: A Benchmark Data Set for Data-Driven Weather Forecasting*, JAMES, 2020.
 
 ## License
 
