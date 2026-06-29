@@ -23,7 +23,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from src.calibration import pit_histogram, reliability_diagram
 from src.dataset import WeatherBenchDataset
-from src.losses import gaussian_crps, gaussian_nll
+from src.losses import beta_gaussian_nll, gaussian_crps, gaussian_nll
 from src.metrics import MetricAccumulator
 from src.model import ProbWrapper
 from src.utils import get_logger, save_checkpoint, set_seed
@@ -38,8 +38,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--backbone", type=str, default="SimVP",
                    choices=["SimVP", "TAU", "PredRNN", "ConvLSTM"])
     p.add_argument("--loss", type=str, default="nll",
-                   choices=["nll", "crps"],
+                   choices=["nll", "crps", "beta_nll"],
                    help="Training objective.")
+    p.add_argument("--beta", type=float, default=0.5,
+                   help="β exponent for --loss beta_nll (Seitzer et al.; default 0.5).")
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--val_batch_size", type=int, default=16)
@@ -62,7 +64,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--data_root", type=str, required=True,
                    help="Path containing ``weather_5_625deg/`` (e.g. ``OpenSTL/data``).")
     p.add_argument("--data_split", type=str, default="5_625")
-    p.add_argument("--variable", type=str, default="t2m")
+    p.add_argument("--variable", type=str, default="t2m",
+                   choices=["t2m", "z", "z500"])
     p.add_argument("--output_dir", type=str, required=True)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", type=str,
@@ -77,6 +80,17 @@ def _parse_args() -> argparse.Namespace:
                    help="Skip training; load best.pth and run full test eval.")
     p.add_argument("--figure_max_scalars", type=int, default=200_000,
                    help="Max scalar samples for reliability/PIT figures.")
+    p.add_argument("--init_from", type=str, default=None,
+                   help="Optional checkpoint to warm-start ProbWrapper (e.g. "
+                        "deterministic SimVP MSE ``best.ckpt``).")
+    p.add_argument("--init_backbone_only", action="store_true", default=True,
+                   help="Load only backbone weights from ``--init_from`` "
+                        "(default: True).")
+    p.add_argument("--no_init_backbone_only", action="store_false",
+                   dest="init_backbone_only",
+                   help="Load full ProbWrapper state dict from ``--init_from``.")
+    p.add_argument("--freeze_backbone", action="store_true",
+                   help="Train ``prob_head`` only (retrofit / warm-start variant b).")
     return p.parse_args()
 
 
@@ -164,6 +178,58 @@ def _select_target_frame(y: torch.Tensor, multi_frame: bool = False
 
 def _denorm(t: torch.Tensor, mean: float, std: float) -> torch.Tensor:
     return t * std + mean
+
+
+def _freeze_backbone(model: ProbWrapper) -> int:
+    """Freeze backbone; leave ``prob_head`` trainable."""
+    for p in model.backbone.parameters():
+        p.requires_grad = False
+    for p in model.prob_head.parameters():
+        p.requires_grad = True
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def _load_init_checkpoint(model: ProbWrapper, init_path: Path,
+                          *, backbone_only: bool,
+                          logger) -> tuple[list[str], list[str]]:
+    """Load warm-start weights into ``ProbWrapper``."""
+    ckpt = torch.load(init_path, map_location="cpu", weights_only=False)
+    state_dict = ckpt.get("model_state_dict", ckpt.get("state_dict", ckpt))
+    if not isinstance(state_dict, dict):
+        raise ValueError(f"Unrecognized checkpoint format: {init_path}")
+
+    if backbone_only:
+        backbone_sd = model.backbone.state_dict()
+        mapped: dict[str, torch.Tensor] = {}
+        for key, val in state_dict.items():
+            candidates = [key]
+            if key.startswith("backbone."):
+                candidates.append(key[len("backbone."):])
+            if key.startswith("model."):
+                candidates.append(key[len("model."):])
+            if key.startswith("method.model."):
+                candidates.append(key[len("method.model."):])
+            for cand in candidates:
+                if cand in backbone_sd:
+                    mapped[cand] = val
+                    break
+        missing, unexpected = model.backbone.load_state_dict(mapped, strict=False)
+        logger.info(
+            "Warm-start backbone from %s (loaded=%d, missing=%d, unexpected=%d)",
+            init_path, len(mapped), len(missing), len(unexpected),
+        )
+        if missing:
+            logger.warning("Backbone missing keys (first 5): %s", missing[:5])
+        return list(missing), list(unexpected)
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    logger.info(
+        "Warm-start full model from %s (missing=%d, unexpected=%d)",
+        init_path, len(missing), len(unexpected),
+    )
+    if missing:
+        logger.warning("Missing keys (first 5): %s", missing[:5])
+    return list(missing), list(unexpected)
 
 
 def _run_validation(model: ProbWrapper, loader: DataLoader,
@@ -286,7 +352,11 @@ def _collect_figure_tensors(
 
 def _paper_eval_banner_probabilistic(metrics: dict, *, dataname: str,
                                      loss_name: str, backbone: str,
-                                     epoch: int) -> str:
+                                     epoch: int,
+                                     variable: str = "t2m",
+                                     unit_label: str = "K",
+                                     display_name: str = "t2m (2 m temperature)"
+                                     ) -> str:
     """Render a paper-style summary block for the probabilistic test pass."""
 
     lines = [
@@ -294,16 +364,16 @@ def _paper_eval_banner_probabilistic(metrics: dict, *, dataname: str,
         f"PAPER EVAL — ProbWrapper({backbone}) + {loss_name.upper()} (physical units)",
         "=" * 78,
         f"  dataname   : {dataname}",
-        "  variable   : t2m (2 m temperature)",
+        f"  variable   : {display_name}",
         "  scaling    : denormalized (WeatherBench train mean / std)",
         f"  best epoch : {epoch}  (selected by val CRPS)",
         "-" * 78,
         "  Point forecasts (from predictive mean):",
-        f"    MAE      (K)     : {metrics['mae']:.6f}",
-        f"    RMSE     (K)     : {metrics['rmse']:.6f}",
+        f"    MAE      ({unit_label}) : {metrics['mae']:.6f}",
+        f"    RMSE     ({unit_label}) : {metrics['rmse']:.6f}",
         "-" * 78,
         "  Probabilistic metrics (Gaussian predictive distribution):",
-        f"    CRPS     (K)     : {metrics['crps']:.6f}",
+        f"    CRPS     ({unit_label}) : {metrics['crps']:.6f}",
         f"    NLL              : {metrics['nll']:.6f}",
         f"    ECE      [0,1]   : {metrics['ece']:.6f}",
         "=" * 78,
@@ -370,10 +440,24 @@ def main() -> None:
     backbone = _build_backbone(args.backbone, args.in_len, C, H, W)
     model = ProbWrapper(backbone, out_channels=C,
                         multi_frame=args.multi_frame).to(device)
-    n_params = sum(p.numel() for p in model.parameters())
-    logger.info("Model parameters: %.2fM", n_params / 1e6)
 
-    optim = torch.optim.AdamW(model.parameters(), lr=args.lr,
+    if args.init_from:
+        _load_init_checkpoint(
+            model, Path(args.init_from).resolve(),
+            backbone_only=args.init_backbone_only, logger=logger,
+        )
+    if args.freeze_backbone:
+        n_trainable = _freeze_backbone(model)
+        logger.info("Frozen backbone; trainable params: %.2fM / %.2fM",
+                    n_trainable / 1e6,
+                    sum(p.numel() for p in model.parameters()) / 1e6)
+
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    n_params = sum(p.numel() for p in model.parameters())
+    logger.info("Model parameters: %.2fM (trainable %.2fM)",
+                n_params / 1e6, sum(p.numel() for p in trainable_params) / 1e6)
+
+    optim = torch.optim.AdamW(trainable_params, lr=args.lr,
                               weight_decay=args.weight_decay)
     steps_per_epoch = max(1, len(train_loader) // max(1, args.accum_steps))
     if args.limit_train_batches is not None:
@@ -386,7 +470,15 @@ def main() -> None:
         anneal_strategy="cos",
     )
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
-    loss_fn = gaussian_nll if args.loss == "nll" else gaussian_crps
+    if args.loss == "nll":
+        loss_fn = gaussian_nll
+    elif args.loss == "crps":
+        loss_fn = gaussian_crps
+    else:
+        beta = args.beta
+        loss_fn = lambda mean, log_var, target: beta_gaussian_nll(
+            mean, log_var, target, beta=beta)
+    loss_tag = args.loss if args.loss != "beta_nll" else f"beta_nll(b={args.beta})"
 
     with csv_path.open("w", newline="") as f:
         csv.writer(f).writerow([
@@ -443,9 +535,10 @@ def main() -> None:
                                   multi_frame=args.multi_frame)
             elapsed = time.time() - t0
             epoch_line = (
-                f"Epoch {epoch:03d} | train_{args.loss}={train_loss:.4f} "
-                f"| val_rmse={val['rmse']:.4f}K val_mae={val['mae']:.4f}K "
-                f"val_crps={val['crps']:.4f}K val_nll={val['nll']:.4f} "
+                f"Epoch {epoch:03d} | train_{loss_tag}={train_loss:.4f} "
+                f"| val_rmse={val['rmse']:.4f}{train_ds.unit_label} "
+                f"val_mae={val['mae']:.4f}{train_ds.unit_label} "
+                f"val_crps={val['crps']:.4f}{train_ds.unit_label} val_nll={val['nll']:.4f} "
                 f"val_ece={val['ece']:.4f} | lr={optim.param_groups[0]['lr']:.2e} "
                 f"| {elapsed:.1f}s"
             )
@@ -539,8 +632,10 @@ def main() -> None:
         logger.info("Per lead-time metrics written to %s", lt_csv)
 
     banner = _paper_eval_banner_probabilistic(
-        test, dataname=dataname, loss_name=args.loss,
+        test, dataname=dataname, loss_name=loss_tag,
         backbone=args.backbone, epoch=best_epoch,
+        variable=args.variable, unit_label=train_ds.unit_label,
+        display_name=train_ds.display_name,
     )
     print("\n" + banner)
     print(f"compact: rmse:{test['rmse']:.6f}, mae:{test['mae']:.6f}, "

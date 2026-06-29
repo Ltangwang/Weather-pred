@@ -1,0 +1,50 @@
+# OpenSTL deterministic baseline — WeatherBench z500 @ 5.625° (MSE loss).
+#
+# Requires geopotential data:
+#   bash scripts/download_weatherbench_z500_5625deg.sh /path/to/OpenSTL/data
+#
+# Usage:
+#   python scripts/run_deterministic.py --config configs/openstl_baseline_z500.yaml \
+#       --backbone simvp --mode full
+
+project_root: .
+openstl_root: ../OpenSTL
+
+launcher: scripts/train_openstl_no_tensorboard.py
+work_dirs: /root/autodl-fs/Weather-pred-results/openstl_work_dirs
+baseline_logs: /root/autodl-fs/Weather-pred-results/baseline_logs
+
+dataname: weather_z500_5_625
+data_root: ./data
+
+hardware:
+  gpus:
+    - 0
+  cuda_visible_devices: null
+
+train:
+  batch_size: 16
+  val_batch_size: 16
+  num_workers: 4
+  seed: 42
+  log_step: 1
+  epochs_smoke: 1
+  epochs_full: 50
+  # Accelerated profile: SAME 50 epochs (fair vs t2m det), larger batch + AMP.
+  epochs_fast: 50
+  batch_size_fast: 32
+  val_batch_size_fast: 32
+  use_fp16_fast: true
+
+limits:
+  train_batches: null
+  val_batches: null
+  test_batches: null
+
+backbones:
+  simvp:
+    method: SimVP
+    cfg: configs/weather/t2m_5_625/SimVP_gSTA.py
+  tau:
+    method: TAU
+    cfg: configs/weather/t2m_5_625/TAU.py

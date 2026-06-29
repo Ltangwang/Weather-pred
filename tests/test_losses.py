@@ -4,7 +4,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from src.losses import gaussian_crps, gaussian_nll, mse_loss
+from src.losses import beta_gaussian_nll, gaussian_crps, gaussian_nll, mse_loss
 
 
 def test_gaussian_nll_scalar_and_grad():
@@ -32,3 +32,16 @@ def test_mse_matches_functional():
     a = torch.randn(2, 3)
     b = torch.randn(2, 3)
     assert torch.allclose(mse_loss(a, b), F.mse_loss(a, b))
+
+
+def test_beta_nll_reweights_with_stop_gradient():
+    torch.manual_seed(0)
+    mean = torch.randn(2, 1, 4, 4, requires_grad=True)
+    log_var = torch.full((2, 1, 4, 4), -1.0, requires_grad=True)
+    target = torch.randn(2, 1, 4, 4)
+    loss = beta_gaussian_nll(mean, log_var, target, beta=0.5)
+    assert loss.dim() == 0
+    loss.backward()
+    assert mean.grad is not None and log_var.grad is not None
+    plain = gaussian_nll(mean.detach(), log_var.detach(), target)
+    assert not torch.allclose(loss.detach(), plain.detach())

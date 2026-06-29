@@ -33,6 +33,9 @@ tau_results*.zip
 convlstm_nll_ft*.zip
 prob_baselines*.zip
 
+# Local push / deploy scripts (not experiment code)
+push_now.sh
+
 # External result mounts (AutoDL / local)
 /autodl-fs/
 Weather-pred-results/

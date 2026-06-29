@@ -33,19 +33,25 @@ def _paper_eval_banner_deterministic(
     dataname: str,
 ) -> str:
     """Human-readable bloc for deterministic test metrics + paper-oriented notes."""
+    if "z500" in dataname:
+        variable = "z500 (geopotential @ 500 hPa)"
+        unit = r"m$^2$s$^{-2}$"
+    else:
+        variable = "t2m (2 m temperature)"
+        unit = "K"
 
     lines = [
         "=" * 78,
         "PAPER EVAL — OpenSTL deterministic baseline (physical units)",
         "=" * 78,
         f"  dataname   : {dataname}",
-        "  variable   : t2m (2 m temperature)",
+        f"  variable   : {variable}",
         "  scaling    : denormalized (WeatherBench train mean / std)",
         "-" * 78,
         "  Point forecasts (always reported):",
-        f"    MAE      (K)     : {mae_val:.6f}",
-        f"    RMSE     (K)     : {rmse_val:.6f}",
-        f"    MSE      (K^2)   : {mse_val:.6f}",
+        f"    MAE      ({unit}) : {mae_val:.6f}",
+        f"    RMSE     ({unit}) : {rmse_val:.6f}",
+        f"    MSE      ({unit}$^2$) : {mse_val:.6f}",
         "-" * 78,
         "  Probabilistic metrics (papers with Gaussian forecasts — project convention):",
         "    CRPS     : N/A  (needs ProbWrapper μ, log σ^2)",
@@ -213,6 +219,40 @@ def _trainer_limit_kw() -> dict:
     return out
 
 
+def _register_weather_z500_dataset() -> None:
+    """Register z500 WeatherBench preset without editing the OpenSTL tree."""
+    from openstl.datasets import dataset_parameters
+
+    dataset_parameters["weather_z500_5_625"] = {
+        "in_shape": [12, 1, 32, 64],
+        "pre_seq_length": 12,
+        "aft_seq_length": 12,
+        "total_length": 24,
+        "data_name": "z",
+        "levels": [500],
+        "train_time": ["1979", "2015"],
+        "val_time": ["2016", "2016"],
+        "test_time": ["2017", "2018"],
+        "metrics": ["mse", "rmse", "mae"],
+    }
+
+    import openstl.utils as utils_mod
+    import openstl.utils.parser as parser_mod
+
+    _orig_create = parser_mod.create_parser
+
+    def _create_parser_with_z500():
+        parser = _orig_create()
+        for action in parser._actions:
+            if action.dest == "dataname" and action.choices is not None:
+                if "weather_z500_5_625" not in action.choices:
+                    action.choices = list(action.choices) + ["weather_z500_5_625"]
+        return parser
+
+    parser_mod.create_parser = _create_parser_with_z500
+    utils_mod.create_parser = _create_parser_with_z500
+
+
 def main() -> None:
     _here = osp.dirname(osp.abspath(__file__))
     openstl_root = osp.abspath(
@@ -227,6 +267,7 @@ def main() -> None:
     if openstl_root not in sys.path:
         sys.path.insert(0, openstl_root)
 
+    _register_weather_z500_dataset()
     _apply_streaming_weather_test_aggregate()
 
     from lightning import Trainer
@@ -236,15 +277,48 @@ def main() -> None:
 
     def _init_trainer_no_tb(self, args, callbacks, strategy="auto"):
         from lightning.pytorch.loggers import CSVLogger
+        from lightning.pytorch.callbacks import EarlyStopping
 
         logger = CSVLogger(save_dir=self.save_dir, name="lightning_csv")
         limit_kw = _trainer_limit_kw()
+
+        # Early stopping: patience=10, min_delta=1e-4, min 15 epochs
+        # monitors the same val_loss used by BestCheckpointCallback
+        early_stop = EarlyStopping(
+            monitor="val_loss",
+            patience=10,
+            min_delta=1e-4,
+            mode="min",
+            verbose=True,
+        )
+        # min_epochs guard: Lightning's EarlyStopping won't fire before epoch 15
+        early_stop.stopped_epoch = 0  # will be updated by Lightning
+        import lightning.pytorch.callbacks as _lc
+        _lc_es = early_stop
+
+        # Wrap to enforce min_epochs=15
+        class _GuardedEarlyStopping(EarlyStopping):
+            _min_epochs = 15
+
+            def on_validation_end(self, trainer, pl_module):
+                if trainer.current_epoch < self._min_epochs:
+                    return
+                super().on_validation_end(trainer, pl_module)
+
+        guarded_es = _GuardedEarlyStopping(
+            monitor="val_loss",
+            patience=10,
+            min_delta=1e-4,
+            mode="min",
+            verbose=True,
+        )
+
         return Trainer(
             devices=args.gpus,
             max_epochs=args.epoch,
             strategy=strategy,
             accelerator="gpu",
-            callbacks=callbacks,
+            callbacks=callbacks + [guarded_es],
             logger=logger,
             enable_progress_bar=True,
             **limit_kw,
@@ -282,6 +356,16 @@ def main() -> None:
     exp = BaseExperiment(args)
     rank, _ = get_dist_info()
     exp.train()
+
+    # Always test from best.ckpt (consistent with ProbWrapper "best by val").
+    best_ckpt = osp.join(exp.save_dir, "checkpoints", "best.ckpt")
+    if osp.isfile(best_ckpt):
+        import torch as _torch
+        ckpt = _torch.load(best_ckpt, map_location="cpu", weights_only=False)
+        exp.method.load_state_dict(ckpt["state_dict"])
+        print(f"Loaded best.ckpt for test: {best_ckpt}")
+    else:
+        print(f"WARNING: best.ckpt not found at {best_ckpt}, testing with last weights.")
 
     if rank == 0:
         print(">" * 35 + " testing  " + "<" * 35)

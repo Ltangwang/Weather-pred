@@ -139,11 +139,26 @@ def build_command(
         raise FileNotFoundError(f"OpenSTL config not found: {cfg_abs}")
 
     train = cfg.get("train", {})
-    epochs_key = "epochs_smoke" if mode == "smoke" else "epochs_full"
+    if mode == "smoke":
+        epochs_key = "epochs_smoke"
+        postfix = "smoke"
+    elif mode == "fast":
+        epochs_key = "epochs_fast"
+        postfix = "det_baseline_fast"
+    else:
+        epochs_key = "epochs_full"
+        postfix = "det_baseline"
     epochs = int(train[epochs_key])
-    postfix = "smoke" if mode == "smoke" else "det_baseline"
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     ex_name = f"{backbone}_{postfix}_{stamp}"
+
+    batch_size = int(train.get("batch_size", 16))
+    val_batch_size = int(train.get("val_batch_size", 16))
+    use_fp16 = bool(train.get("use_fp16", False))
+    if mode == "fast":
+        batch_size = int(train.get("batch_size_fast", batch_size))
+        val_batch_size = int(train.get("val_batch_size_fast", val_batch_size))
+        use_fp16 = bool(train.get("use_fp16_fast", use_fp16))
 
     work_rel = cfg.get("work_dirs", "results/openstl_work_dirs")
     log_rel = cfg.get("baseline_logs", "results/baseline_logs")
@@ -172,9 +187,9 @@ def build_command(
         "-e",
         str(epochs),
         "--batch_size",
-        str(int(train.get("batch_size", 16))),
+        str(batch_size),
         "--val_batch_size",
-        str(int(train.get("val_batch_size", 16))),
+        str(val_batch_size),
         "--num_workers",
         str(int(train.get("num_workers", 4))),
         "--seed",
@@ -182,6 +197,8 @@ def build_command(
         "--log_step",
         str(int(train.get("log_step", 1))),
     ]
+    if use_fp16:
+        args.append("--fp16")
 
     hw = cfg.get("hardware") or {}
     gpus = list(gpus_override) if gpus_override is not None else hw.get("gpus", [0])
@@ -261,15 +278,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--backbone",
-        choices=("simvp", "convlstm"),
+        choices=("simvp", "convlstm", "tau"),
         required=True,
-        help="SimVP or ConvLSTM preset from YAML ``backbones``.",
+        help="SimVP, TAU, or ConvLSTM preset from YAML ``backbones``.",
     )
     parser.add_argument(
         "--mode",
-        choices=("smoke", "full"),
+        choices=("smoke", "full", "fast"),
         default="full",
-        help="smoke: epochs_smoke from YAML; full: epochs_full.",
+        help="smoke: 1 epoch; full: epochs_full; fast: epochs_fast (larger batch + fp16).",
     )
     parser.add_argument(
         "--cuda-visible-device",

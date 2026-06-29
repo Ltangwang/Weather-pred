@@ -19,6 +19,48 @@ _DEFAULT_IN_LEN = 10
 _DEFAULT_OUT_LEN = 10
 _DEFAULT_RES: Tuple[int, int] = (32, 64)
 
+# OpenSTL short-name → default pressure level(s) and paper-facing metadata.
+_VARIABLE_DEFAULTS: dict[str, dict[str, object]] = {
+    "t2m": {
+        "data_name": "t2m",
+        "levels": ["50"],
+        "unit_label": "K",
+        "display_name": "t2m (2 m temperature)",
+    },
+    "z": {
+        "data_name": "z",
+        "levels": ["500"],
+        "unit_label": r"m$^2$s$^{-2}$",
+        "display_name": "z500 (geopotential @ 500 hPa)",
+    },
+    "z500": {
+        "data_name": "z",
+        "levels": ["500"],
+        "unit_label": r"m$^2$s$^{-2}$",
+        "display_name": "z500 (geopotential @ 500 hPa)",
+    },
+}
+
+
+def resolve_variable_config(variable: str,
+                            levels: list[str] | None = None
+                            ) -> tuple[str, list[str], str, str]:
+    """Resolve CLI ``variable`` into OpenSTL ``data_name``, levels, and labels."""
+    key = variable.lower()
+    if key not in _VARIABLE_DEFAULTS:
+        raise ValueError(
+            f"Unsupported variable {variable!r}; choose from "
+            f"{sorted(_VARIABLE_DEFAULTS)}")
+    cfg = _VARIABLE_DEFAULTS[key]
+    data_name = str(cfg["data_name"])
+    resolved_levels = levels if levels is not None else list(cfg["levels"])
+    return (
+        data_name,
+        resolved_levels,
+        str(cfg["unit_label"]),
+        str(cfg["display_name"]),
+    )
+
 
 def denormalize(tensor: torch.Tensor, mean: float, std: float) -> torch.Tensor:
     """Convert a z-score tensor back to physical units (Kelvin)."""
@@ -49,8 +91,9 @@ class WeatherBenchDataset(Dataset):
         split: One of ``"train"``, ``"val"``, ``"test"``.
         in_len: Number of input frames (default 10).
         out_len: Number of output frames to predict (default 10).
-        variable: Variable short-name; default ``"t2m"``.
+        variable: WeatherBench short-name; ``"t2m"``, ``"z"`` / ``"z500"``, etc.
         data_split: Spatial resolution code; default ``"5_625"``.
+        levels: Optional pressure-level override for OpenSTL loader.
         norm_stats: Optional ``(mean, std)`` override; if None and split is
             not "train", a previously saved JSON must be supplied via
             `norm_stats_path` in `train`-then-eval workflows.
@@ -72,11 +115,15 @@ class WeatherBenchDataset(Dataset):
                  out_len: int = _DEFAULT_OUT_LEN,
                  variable: str = "t2m",
                  data_split: str = "5_625",
+                 levels: list[str] | None = None,
                  norm_stats: Optional[Tuple[float, float]] = None,
                  norm_stats_path: Optional[str] = None):
         if split not in self.SPLIT_TIMES:
             raise ValueError(f"split must be one of {list(self.SPLIT_TIMES)}")
         from openstl.datasets.dataloader_weather import WeatherBenchDataset as _OSDS
+
+        data_name, resolved_levels, unit_label, display_name = (
+            resolve_variable_config(variable, levels=levels))
 
         # ASSUMPTION: OpenSTL data layout is `<data_root>/weather_<split>deg/<var>/`.
         for suffix in (f"weather_{data_split}deg", "weather", f"{data_split}deg"):
@@ -98,15 +145,18 @@ class WeatherBenchDataset(Dataset):
                            "std":  np.array(s).reshape(1, 1, 1, 1)}
 
         self._ds = _OSDS(
-            data_root=weather_root, data_name=variable, data_split=data_split,
+            data_root=weather_root, data_name=data_name, data_split=data_split,
             training_time=self.SPLIT_TIMES[split],
-            idx_in=idx_in, idx_out=idx_out, step=1, levels=["50"],
+            idx_in=idx_in, idx_out=idx_out, step=1, levels=resolved_levels,
             use_augment=False, **mean_std_kw,
         )
         self.mean = float(np.array(self._ds.mean).reshape(-1)[0])
         self.std = float(np.array(self._ds.std).reshape(-1)[0])
         self.in_len = in_len
         self.out_len = out_len
+        self.variable = variable
+        self.unit_label = unit_label
+        self.display_name = display_name
         if norm_stats_path is not None and split == "train":
             save_norm_stats(self.mean, self.std, norm_stats_path)
 

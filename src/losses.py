@@ -32,6 +32,29 @@ def gaussian_nll(mean: Tensor, log_var: Tensor, target: Tensor) -> Tensor:
     return 0.5 * (log_var + (target - mean).pow(2) / log_var.exp()).mean()
 
 
+def beta_gaussian_nll(mean: Tensor, log_var: Tensor, target: Tensor,
+                      beta: float = 0.5) -> Tensor:
+    """β-NLL reweighting from Seitzer et al. (2022).
+
+    Per-element NLL is multiplied by ``σ^(2β)`` with ``σ = exp(0.5 * log_var)``
+    detached from the graph (stop-gradient on the variance scale). ``β=0.5`` is
+    the recommended default in the original paper.
+
+    Args:
+        mean: Predicted mean.
+        log_var: Predicted log-variance.
+        target: Ground truth.
+        beta: Reweighting exponent (typically 0.5).
+
+    Returns:
+        Scalar mean β-NLL loss.
+    """
+    per_elem = 0.5 * (log_var + (target - mean).pow(2) / log_var.exp())
+    sigma = (0.5 * log_var).exp()
+    weight = sigma.pow(2.0 * beta).detach()
+    return (weight * per_elem).mean()
+
+
 def gaussian_crps(mean: Tensor, log_var: Tensor, target: Tensor) -> Tensor:
     """Closed-form CRPS for a Gaussian predictive distribution.
 

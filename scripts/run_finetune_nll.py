@@ -45,7 +45,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--output_dir", type=str, required=True)
     p.add_argument("--data_root", type=str, required=True)
     p.add_argument("--data_split", type=str, default="5_625")
-    p.add_argument("--variable", type=str, default="t2m")
+    p.add_argument("--variable", type=str, default="t2m",
+                   choices=["t2m", "z", "z500"])
 
     p.add_argument("--backbone", type=str, default="SimVP",
                    choices=["SimVP", "TAU", "PredRNN", "ConvLSTM"])
@@ -363,6 +364,8 @@ def main() -> None:
     banner = _paper_eval_banner_probabilistic(
         test, dataname=dataname, loss_name="nll-ft",
         backbone=args.backbone, epoch=best_epoch,
+        variable=args.variable, unit_label=train_ds.unit_label,
+        display_name=train_ds.display_name,
     )
     print("\n" + banner)
     print(f"compact: rmse:{test['rmse']:.6f}, mae:{test['mae']:.6f}, "
