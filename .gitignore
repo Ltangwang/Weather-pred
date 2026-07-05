@@ -35,6 +35,7 @@ prob_baselines*.zip
 
 # Local push / deploy scripts (not experiment code)
 push_now.sh
+scripts/push_to_github.sh
 
 # External result mounts (AutoDL / local)
 /autodl-fs/

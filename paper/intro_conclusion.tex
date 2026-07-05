@@ -23,19 +23,19 @@ We therefore propose a \textbf{two-stage CRPS-then-NLL} training scheme: Stage~1
 We evaluate on the WeatherBench 2-metre temperature benchmark ($5.625^\circ$, 12$\rightarrow$12-step forecasting), reporting all metrics in denormalized physical units (Kelvin).
 Our contributions are:
 \textbf{(i)}~ProbWrapper, a plug-and-play probabilistic head that is demonstrably backbone-agnostic across SimVP, TAU, PredRNN and ConvLSTM;
-\textbf{(ii)}~a two-stage CRPS$\rightarrow$NLL training scheme that resolves the NLL cold-start, with an ablation against direct-NLL training quantifying the gain;
+\textbf{(ii)}~a two-stage CRPS$\rightarrow$NLL training scheme that resolves the NLL cold-start, with ablations against direct-NLL and single-stage $\beta$-NLL (Seitzer et al.) training quantifying the gain;
 \textbf{(iii)}~a fair probabilistic comparison against climatology, persistence, MC Dropout and Deep Ensembles under an identical metric pipeline, showing that a \emph{single} ProbWrapper outperforms MC Dropout on CRPS/RMSE/NLL at one-tenth of its inference cost and recovers most of the Deep-Ensemble gain at one-third of its training and inference cost; and
-\textbf{(iv)}~a calibration analysis (ECE, reliability and PIT diagrams) and a discussion of how the resulting uncertainty feeds risk-aware engineering decisions.
+\textbf{(iv)}~calibration analysis (ECE, reliability and PIT diagrams), cross-backbone and cross-variable (z500) generalization, and a discussion of how the resulting uncertainty feeds risk-aware engineering decisions.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
 We presented ProbWrapper, a minimal and backbone-agnostic probabilistic head that converts trusted deterministic spatiotemporal backbones into calibrated Gaussian forecasters with a single $1\times1$ convolution and a single forward pass at inference.
-To train it reliably, we introduced a two-stage CRPS-then-NLL scheme that eliminates the cold-start instability of training the Gaussian likelihood from scratch; our ablation shows direct-NLL training is both less accurate and less calibrated than the two-stage procedure.
+To train it reliably, we introduced a two-stage CRPS-then-NLL scheme that eliminates the cold-start instability of training the Gaussian likelihood from scratch; our ablations show direct-NLL and single-stage $\beta$-NLL training are both less accurate and less calibrated than the two-stage procedure.
 
-On the WeatherBench t2m benchmark, ProbWrapper attaches cleanly to SimVP, TAU, PredRNN and ConvLSTM, confirming that the method is not tied to any single architecture.
+On the WeatherBench t2m benchmark, ProbWrapper attaches cleanly to SimVP, TAU, PredRNN and ConvLSTM, confirming that the method is not tied to any single architecture; the same recipe transfers to geopotential at 500\,hPa (z500) without architectural changes.
 Against probabilistic baselines under an identical denormalized-metric pipeline, a single ProbWrapper(SimVP) surpasses MC Dropout (CRPS $0.475$ vs.\ $0.492$\,K, RMSE $0.977$ vs.\ $1.020$\,K) while requiring only one forward pass instead of ten, and recovers most of the Deep-Ensemble improvement (CRPS $0.455$\,K, three models) at a third of the training and inference budget.
 We further found that injecting MC Dropout into gated backbones such as SimVP-gSTA is unstable, which underscores the value of an explicit, lightweight uncertainty head over post-hoc stochastic approximations for modern spatiotemporal models.
 
 Beyond accuracy, the calibrated predictive variance is directly actionable: it supplies the per-location, per-lead-time risk estimates that downstream controllers in energy, grid, agricultural and early-warning applications require.
-Limitations of the present study include a single variable (2-metre temperature), a single spatial resolution ($5.625^\circ$) and a 12-step horizon; extending ProbWrapper to multiple variables, higher resolutions, and longer lead times---together with non-Gaussian predictive heads for multimodal weather regimes---are promising directions for future work.
+Limitations of the present study include evaluation at a single spatial resolution ($5.625^\circ$) and a 12-step horizon; extending ProbWrapper to higher resolutions, longer lead times, and non-Gaussian predictive heads for multimodal weather regimes are promising directions for future work.
