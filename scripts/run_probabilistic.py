@@ -463,7 +463,6 @@ def main() -> None:
     if args.limit_train_batches is not None:
         steps_per_epoch = max(1, min(steps_per_epoch,
                                      args.limit_train_batches // max(1, args.accum_steps)))
-    # OneCycleLR: first pct_start of steps ramp 0 -> max_lr (warmup), then cosine decay.
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optim, max_lr=args.lr, epochs=args.epochs,
         steps_per_epoch=steps_per_epoch, pct_start=args.pct_start,
@@ -620,7 +619,6 @@ def main() -> None:
     )
 
     if "per_leadtime" in test:
-        # Save a per lead-time table for the paper appendix.
         lt_csv = output_dir / "per_leadtime.csv"
         with lt_csv.open("w", newline="") as f:
             w = csv.writer(f)

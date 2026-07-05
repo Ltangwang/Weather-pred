@@ -190,7 +190,6 @@ class SyntheticWeatherBench(Dataset):
         self.mean = mean
         self.std = std
         self._rng = np.random.default_rng(seed)
-        # Pre-generate to ensure determinism per index.
         self._buf = self._rng.standard_normal(
             (length + in_len + out_len, 1, self.H, self.W)).astype(np.float32)
 

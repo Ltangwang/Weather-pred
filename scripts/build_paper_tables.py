@@ -91,7 +91,6 @@ def main() -> None:
     out = Path(args.output_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
 
-    # --- Table 1: probabilistic methods on SimVP ---
     rows_t1: list[str] = []
     static_rows = [
         ("Climatology + $\\sigma_{\\mathrm{clim}}$",
@@ -149,7 +148,6 @@ def main() -> None:
         f.write("\n".join(rows_t1))
         f.write("\n\\bottomrule\n\\end{tabular}\n\\end{table}\n")
 
-    # --- Table 2: backbone generalization ---
     rows_t2: list[str] = []
     for label, sub in [
         ("SimVP-det (MSE)", None),
@@ -213,7 +211,6 @@ def main() -> None:
     print(f"Wrote {t2_path}")
     print(f"Wrote {rollup}")
 
-    # --- Table 3: z500 cross-variable generalization (SimVP / TAU) ---
     rows_t3: list[str] = []
     for label, sub in [
         ("ProbWrapper + SimVP (CRPS$\\rightarrow$NLL, s42)",

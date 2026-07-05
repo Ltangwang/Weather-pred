@@ -149,7 +149,6 @@ def main() -> None:
     accum = MetricAccumulator()
     per_lt = {} if args.multi_frame else None
 
-    # Figure subsample buffers.
     fig_mu_parts, fig_lv_parts, fig_tg_parts = [], [], []
     n_fig = 0
 
@@ -167,7 +166,6 @@ def main() -> None:
             for t in range(mu.shape[1]):
                 per_lt.setdefault(t, MetricAccumulator()).update(
                     mu[:, t], lv[:, t], tg[:, t])
-        # Subsample scalars for reliability/PIT.
         if n_fig < args.figure_max_scalars:
             mflat = mu.reshape(-1)
             remaining = args.figure_max_scalars - n_fig
@@ -201,7 +199,6 @@ def main() -> None:
                             f"{m['ece']:.6f}"])
         logger.info("Per lead-time metrics written to %s", lt_csv)
 
-    # Figures.
     shape = (n_fig, 1, 1, 1)
     fig_mu = torch.cat(fig_mu_parts).reshape(shape)
     fig_lv = torch.cat(fig_lv_parts).reshape(shape)

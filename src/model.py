@@ -15,7 +15,6 @@ class ConvLSTMCell(nn.Module):
         super().__init__()
         padding = kernel_size // 2
         self.hidden_channels = hidden_channels
-        # 4 * hidden gates packed in one conv.
         self.conv = nn.Conv2d(in_channels + hidden_channels,
                               4 * hidden_channels,
                               kernel_size=kernel_size,
